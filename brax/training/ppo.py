@@ -204,7 +204,8 @@ def train(
     log_frequency=10,
     normalize_observations=False,
     reward_scaling=1.,
-    progress_fn: Optional[Callable[[int, Dict[str, Any]], None]] = None,
+    progress_fn: Optional[Callable[[int, Any, Any, Dict[str, Any]],
+                                   None]] = None,
 ):
   """PPO training."""
   assert batch_size * num_minibatches % num_envs == 0
@@ -423,6 +424,10 @@ def train(
   state = first_state
   metrics = {}
 
+  _, inference = make_params_and_inference_fn(core_env.observation_size,
+                                              core_env.action_size,
+                                              normalize_observations)
+
   for it in range(log_frequency + 1):
     logging.info('starting iteration %s %s', it, time.time() - xt)
     t = time.time()
@@ -458,8 +463,14 @@ def train(
           }))
       logging.info(metrics)
       if progress_fn:
-        progress_fn(int(training_state.normalizer_params[0][0]) * action_repeat,
-                    metrics)
+        normalizer_params = jax.tree_map(lambda x: x[0],
+                                         training_state.normalizer_params)
+        policy_params = jax.tree_map(lambda x: x[0],
+                                     training_state.params['policy'])
+        params = normalizer_params, policy_params
+        progress_fn(
+            int(training_state.normalizer_params[0][0]) * action_repeat,
+            inference, params, metrics)
 
     if it == log_frequency:
       break
@@ -483,9 +494,6 @@ def train(
 
   logging.info('total steps: %s', normalizer_params[0] * action_repeat)
 
-  _, inference = make_params_and_inference_fn(core_env.observation_size,
-                                              core_env.action_size,
-                                              normalize_observations)
   params = normalizer_params, policy_params
 
   pmap.synchronize_hosts()
